@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# Speak into the mic, press Enter to stop, get transcript on stdout + clipboard.
+set -euo pipefail
+
+MODEL="${WHISPER_MODEL:-$HOME/.local/share/whisper-cpp/models/ggml-large-v3-turbo.bin}"
+LANG_FLAG="${WHISPER_LANG:-en}"
+
+if [[ ! -f "$MODEL" ]]; then
+  echo "dictate: model not found at $MODEL" >&2
+  echo "         set WHISPER_MODEL or download to that path" >&2
+  exit 1
+fi
+
+WAV="$(mktemp -t dictate).wav"
+trap 'rm -f "$WAV"' EXIT
+
+AUDIO_DEV="${DICTATE_AUDIO_DEV:-}"
+if [[ -z "$AUDIO_DEV" ]]; then
+  AUDIO_DEV=$("$(dirname "$0")/dictate-find-mic" 2>/dev/null || echo ":0")
+fi
+echo "[dictate] recording from $AUDIO_DEV — press Enter to stop (Ctrl-C to abort)..." >&2
+
+ffmpeg -hide_banner -loglevel error \
+  -f avfoundation -i "$AUDIO_DEV" \
+  -ac 1 -ar 16000 -y "$WAV" </dev/null &
+FFPID=$!
+
+# stop on Enter; also stop cleanly if user hits Ctrl-C
+trap 'kill -INT "$FFPID" 2>/dev/null || true; wait "$FFPID" 2>/dev/null || true; rm -f "$WAV"; exit 130' INT
+read -r _ || true
+
+kill -INT "$FFPID" 2>/dev/null || true
+wait "$FFPID" 2>/dev/null || true
+
+if [[ ! -s "$WAV" ]]; then
+  echo "[dictate] no audio captured (check mic permission for your terminal)" >&2
+  exit 1
+fi
+
+echo "[dictate] transcribing..." >&2
+TEXT=$(whisper-cli -m "$MODEL" -l "$LANG_FLAG" -f "$WAV" -nt -np 2>/dev/null \
+       | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' \
+       | awk 'NF' \
+       | paste -sd ' ' -)
+
+if [[ -z "$TEXT" ]]; then
+  echo "[dictate] no speech detected" >&2
+  exit 1
+fi
+
+printf '%s\n' "$TEXT"
+printf '%s' "$TEXT" | pbcopy
+echo "[dictate] copied to clipboard" >&2

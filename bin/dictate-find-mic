@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Print the first preferred avfoundation audio device that is currently attached,
+# in the form ":Name" suitable for ffmpeg's -i.
+# Override the preference order with DICTATE_MIC_PREFERENCE (comma-separated names).
+set -euo pipefail
+
+PREFS="${DICTATE_MIC_PREFERENCE:-MX Brio,MacBook Pro Microphone}"
+
+# ffmpeg -list_devices always exits nonzero (no real input given); ignore status.
+DEVICES=$(ffmpeg -hide_banner -f avfoundation -list_devices true -i "" 2>&1 || true)
+DEVICES=$(printf '%s\n' "$DEVICES" \
+  | awk '
+      /AVFoundation audio devices:/ { in_audio=1; next }
+      in_audio && /\] \[[0-9]+\] / {
+        sub(/^[^]]*\] \[[0-9]+\] /, "")
+        print
+      }
+      in_audio && /Error opening input/ { exit }
+    ')
+
+IFS=',' read -r -a wanted <<<"$PREFS"
+for name in "${wanted[@]}"; do
+  trimmed="${name#"${name%%[![:space:]]*}"}"
+  trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+  if grep -Fxq -- "$trimmed" <<<"$DEVICES"; then
+    printf ':%s\n' "$trimmed"
+    exit 0
+  fi
+done
+
+# Nothing matched — fall back to first listed device, if any.
+first=$(printf '%s\n' "$DEVICES" | head -n1)
+if [[ -n "$first" ]]; then
+  printf ':%s\n' "$first"
+  exit 0
+fi
+
+echo "dictate-find-mic: no avfoundation audio devices found" >&2
+exit 1

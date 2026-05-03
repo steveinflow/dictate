@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# Stateful toggle for hotkey-driven dictation.
+# First call: starts ffmpeg recording in the background, exits 0 silently.
+# Second call: stops the recording, transcribes, prints transcript on stdout.
+set -euo pipefail
+
+STATE_DIR="${TMPDIR:-/tmp}/dictate-toggle"
+mkdir -p "$STATE_DIR"
+PID_FILE="$STATE_DIR/ffmpeg.pid"
+WAV_FILE="$STATE_DIR/recording.wav"
+
+MODEL="${WHISPER_MODEL:-$HOME/.local/share/whisper-cpp/models/ggml-large-v3-turbo.bin}"
+LANG_FLAG="${WHISPER_LANG:-en}"
+
+if [[ ! -f "$MODEL" ]]; then
+  echo "dictate-toggle: model not found at $MODEL" >&2
+  exit 1
+fi
+
+# Stop phase: PID file present and process alive
+if [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+  PID="$(cat "$PID_FILE")"
+  kill -INT "$PID" 2>/dev/null || true
+  for _ in $(seq 1 100); do
+    kill -0 "$PID" 2>/dev/null || break
+    sleep 0.05
+  done
+  rm -f "$PID_FILE"
+
+  if [[ ! -s "$WAV_FILE" ]]; then
+    echo "dictate-toggle: no audio captured" >&2
+    exit 1
+  fi
+
+  TEXT=$(whisper-cli -m "$MODEL" -l "$LANG_FLAG" -f "$WAV_FILE" -nt -np 2>/dev/null \
+         | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' \
+         | awk 'NF' \
+         | paste -sd ' ' -)
+  rm -f "$WAV_FILE"
+
+  if [[ -z "$TEXT" ]]; then
+    echo "dictate-toggle: no speech detected" >&2
+    exit 1
+  fi
+  printf '%s' "$TEXT"
+  exit 0
+fi
+
+# Start phase: stale pid file or none
+rm -f "$PID_FILE" "$WAV_FILE"
+AUDIO_DEV="${DICTATE_AUDIO_DEV:-}"
+if [[ -z "$AUDIO_DEV" ]]; then
+  AUDIO_DEV=$("$(dirname "$0")/dictate-find-mic" 2>/dev/null || echo ":0")
+fi
+ffmpeg -hide_banner -loglevel error \
+  -f avfoundation -i "$AUDIO_DEV" \
+  -ac 1 -ar 16000 -y "$WAV_FILE" </dev/null >/dev/null 2>&1 &
+echo $! > "$PID_FILE"
+disown 2>/dev/null || true
+exit 0
