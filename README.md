@@ -63,7 +63,13 @@ dictate-toggle     # stops, prints transcript on stdout
 | `WHISPER_MODEL` | Path to GGML model file | `~/.local/share/whisper-cpp/models/ggml-large-v3-turbo.bin` |
 | `WHISPER_LANG` | Language code or `auto` | `en` |
 | `DICTATE_AUDIO_DEV` | avfoundation device, e.g. `:0`, `:MX Brio` | (auto via `dictate-find-mic`) |
-| `DICTATE_MIC_PREFERENCE` | Comma-separated mic preference order | `MX Brio,MacBook Pro Microphone` |
+| `DICTATE_MIC_PREFERENCE` | Comma-separated mic preference order | `MX Brio,Razer Kiyo,MacBook Pro Microphone` |
+| `DICTATE_INTERNAL_MIC` | Name of the built-in mic; skipped when lid is closed | `MacBook Pro Microphone` |
+
+When the laptop lid is closed (clamshell mode), `dictate-find-mic` skips the
+built-in mic from both the preference list and the ultimate fallback, so it
+holds out for whatever USB device is attached (Brio, Kiyo, headset, etc.).
+Lid state is read from `ioreg -k AppleClamshellState`.
 
 List your audio devices to see what names work:
 ```sh

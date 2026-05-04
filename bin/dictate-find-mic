@@ -4,7 +4,15 @@
 # Override the preference order with DICTATE_MIC_PREFERENCE (comma-separated names).
 set -euo pipefail
 
-PREFS="${DICTATE_MIC_PREFERENCE:-MX Brio,MacBook Pro Microphone}"
+PREFS="${DICTATE_MIC_PREFERENCE:-MX Brio,Razer Kiyo,MacBook Pro Microphone}"
+INTERNAL_MIC="${DICTATE_INTERNAL_MIC:-MacBook Pro Microphone}"
+
+# When the laptop lid is closed (clamshell mode) the built-in mic is typically
+# unavailable, so skip it from the preference list and hold out for a USB device.
+LID_CLOSED=no
+if ioreg -r -k AppleClamshellState 2>/dev/null | grep -q '"AppleClamshellState" = Yes'; then
+  LID_CLOSED=yes
+fi
 
 # ffmpeg -list_devices always exits nonzero (no real input given); ignore status.
 DEVICES=$(ffmpeg -hide_banner -f avfoundation -list_devices true -i "" 2>&1 || true)
@@ -22,18 +30,29 @@ IFS=',' read -r -a wanted <<<"$PREFS"
 for name in "${wanted[@]}"; do
   trimmed="${name#"${name%%[![:space:]]*}"}"
   trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+  if [[ "$LID_CLOSED" == "yes" && "$trimmed" == "$INTERNAL_MIC" ]]; then
+    continue
+  fi
   if grep -Fxq -- "$trimmed" <<<"$DEVICES"; then
     printf ':%s\n' "$trimmed"
     exit 0
   fi
 done
 
-# Nothing matched — fall back to first listed device, if any.
-first=$(printf '%s\n' "$DEVICES" | head -n1)
-if [[ -n "$first" ]]; then
-  printf ':%s\n' "$first"
+# Nothing matched — fall back to first listed device, skipping the built-in
+# mic when the lid is closed (it would only fail to record).
+while IFS= read -r dev; do
+  [[ -z "$dev" ]] && continue
+  if [[ "$LID_CLOSED" == "yes" && "$dev" == "$INTERNAL_MIC" ]]; then
+    continue
+  fi
+  printf ':%s\n' "$dev"
   exit 0
-fi
+done <<<"$DEVICES"
 
-echo "dictate-find-mic: no avfoundation audio devices found" >&2
+if [[ "$LID_CLOSED" == "yes" ]]; then
+  echo "dictate-find-mic: lid is closed and no external audio device is available" >&2
+else
+  echo "dictate-find-mic: no avfoundation audio devices found" >&2
+fi
 exit 1
