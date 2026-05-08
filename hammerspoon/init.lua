@@ -1,9 +1,9 @@
--- Global push-to-toggle dictation.
--- Hotkey: Option+Cmd+D
---   1st press: start recording
---   2nd press: stop, transcribe via whisper.cpp, paste into focused app
+-- Global push-to-toggle dictation + speak-selection.
+-- ⌥⌘D: 1st press start recording, 2nd press stop + transcribe + paste.
+-- ⌥⌘S: speak the currently selected text via Kokoro; press again to stop.
 
 local DICTATE_TOGGLE = os.getenv("HOME") .. "/.local/bin/dictate-toggle"
+local SPEAK = os.getenv("HOME") .. "/.local/bin/speak"
 local PID_FILE = (os.getenv("TMPDIR") or "/tmp/") .. "dictate-toggle/ffmpeg.pid"
 
 local function isRecording()
@@ -46,4 +46,46 @@ end
 
 hs.hotkey.bind({ "alt", "cmd" }, "d", toggleDictation)
 
-hs.alert.show("hammerspoon: dictation hotkey ready (⌥⌘D)", 1.5)
+local speakTask = nil
+
+local function speakSelection()
+    if speakTask and speakTask:isRunning() then
+        speakTask:terminate()
+        speakTask = nil
+        hs.alert.closeAll()
+        hs.alert.show("speak: stopped", { textSize = 14 }, 0.6)
+        return
+    end
+
+    local prev = hs.pasteboard.getContents()
+    hs.pasteboard.clearContents()
+    hs.eventtap.keyStroke({ "cmd" }, "c", 0)
+
+    -- Wait for the focused app to populate the pasteboard, then read it.
+    hs.timer.doAfter(0.15, function()
+        local text = hs.pasteboard.getContents()
+        if prev then hs.pasteboard.setContents(prev) end
+
+        if not text or text:gsub("%s+", "") == "" then
+            hs.alert.show("speak: nothing selected", 1.0)
+            return
+        end
+
+        hs.alert.closeAll()
+        hs.alert.show("speaking...", { textSize = 14 }, 0.6)
+
+        speakTask = hs.task.new("/bin/zsh", function(exitCode, _, stdErr)
+            speakTask = nil
+            -- 143 = SIGTERM (we asked it to stop); anything else is a real error.
+            if exitCode ~= 0 and exitCode ~= 143 then
+                hs.alert.show("speak: " .. (stdErr or "error"), 2)
+            end
+        end, { "-lc", "exec " .. SPEAK })
+        speakTask:setInput(text)
+        speakTask:start()
+    end)
+end
+
+hs.hotkey.bind({ "alt", "cmd" }, "s", speakSelection)
+
+hs.alert.show("hammerspoon: dictate ⌥⌘D · speak ⌥⌘S", 1.5)

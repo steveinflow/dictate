@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Local TTS via Kokoro v1.0. Finds a Python that has kokoro_onnx installed
+# (the login-shell python3 may not be the one where you ran `pip install`).
+# Override discovery with KOKORO_PYTHON=/path/to/python.
+set -euo pipefail
+
+# Resolve symlink so we can find _speak.py next to the real script.
+src="${BASH_SOURCE[0]}"
+while [[ -L "$src" ]]; do
+  target="$(readlink "$src")"
+  [[ "$target" = /* ]] && src="$target" || src="$(cd -- "$(dirname -- "$src")" && pwd)/$target"
+done
+HERE="$(cd -- "$(dirname -- "$src")" && pwd)"
+IMPL="$HERE/_speak.py"
+
+find_python() {
+  if [[ -n "${KOKORO_PYTHON:-}" ]]; then
+    echo "$KOKORO_PYTHON"; return 0
+  fi
+  local cands=()
+  command -v python3 >/dev/null 2>&1 && cands+=("$(command -v python3)")
+  cands+=(
+    "$HOME/miniconda3/bin/python3"
+    "$HOME/anaconda3/bin/python3"
+    "$HOME/.pyenv/shims/python3"
+    "/opt/homebrew/bin/python3"
+    "/usr/local/bin/python3"
+    "/usr/bin/python3"
+  )
+  for p in "${cands[@]}"; do
+    [[ -x "$p" ]] || continue
+    if "$p" -c "import kokoro_onnx" >/dev/null 2>&1; then
+      echo "$p"; return 0
+    fi
+  done
+  return 1
+}
+
+if ! PY=$(find_python); then
+  echo "speak: no python with kokoro_onnx found" >&2
+  echo "        install with:  pip install kokoro-onnx" >&2
+  echo "        or set:        KOKORO_PYTHON=/path/to/python" >&2
+  exit 1
+fi
+
+exec "$PY" "$IMPL" "$@"

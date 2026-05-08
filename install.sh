@@ -9,7 +9,7 @@ HS_DST="$HOME/.hammerspoon"
 
 mkdir -p "$BIN_DST" "$HS_DST"
 
-for f in dictate dictate-toggle dictate-find-mic; do
+for f in dictate dictate-toggle dictate-find-mic speak _speak.py; do
   ln -sfn "$REPO_DIR/bin/$f" "$BIN_DST/$f"
   echo "linked $BIN_DST/$f -> $REPO_DIR/bin/$f"
 done
